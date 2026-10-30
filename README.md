@@ -19,14 +19,18 @@ wall. everyone scans it and gives a name, then answers statements:
 
 | | |
 | --- | --- |
-| a statement | how much you agree, from −100 to 100 |
-| a question asking for a probability | the chance you give it, from 0 to 100% |
+| as a probability, the default | how confident you are that it is true, 0 to 100% |
+| as agreement | from 1, strongly disagree, to 7, strongly agree |
 
-most statements can be put either way, so the facilitator chooses: as
-written (mostly agreement, some probabilities), all agreement, where a
-question like "What is the chance that a fish feels pain?" becomes the
-claim "A fish feels pain.", or all probabilities, where every statement
-is answered with the chance that it is true.
+most statements can be put either way, so the facilitator chooses. a room
+starts with all probabilities: people we asked found an explicit
+probability easier to understand than a scale, and arguing about how
+likely something is makes for better conversations than whether you agree
+with it. the other choices are all agreement, where a question like "What
+is the chance that a fish feels pain?" becomes the claim "A fish feels
+pain.", and as written, mostly agreement with some probabilities. the
+agreement scale has seven points because seven-point scales are the ones
+with evidence behind them.
 
 in the **bingo** mode each person is dealt a grid of statements, 3×3 to
 5×5. the statements they talk about are marked, and a full line is a
@@ -69,8 +73,10 @@ swap is made. with an odd number, the one left over joins the pair whose
 statement they are furthest from, as a three. people who have answered
 nothing anybody else has answered are told they were not paired, and why.
 
-a probability's scale is half as wide as agreement's, so its gaps count
-double when the two are compared.
+both scales are compared on one from 0 to 200: from 0% to 100% is as far
+apart as from 1 to 7. one step of agreement is 33 points, one percentage
+point is 2. an answer that moves 20 points, one step or ten percentage
+points, counts as an update.
 
 ## who wins
 

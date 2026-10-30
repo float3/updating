@@ -85,7 +85,7 @@ pub struct Tally<'a> {
     statement: &'a Statement,
     n: usize,
     mean: f64,
-    /// The standard deviation, on the agreement scale.
+    /// The standard deviation, on a common scale from -100 to 100.
     spread: f64,
     first_mean: f64,
     updated: usize,
@@ -151,26 +151,26 @@ fn group_view<'a>(game: &'a Game, number: usize, group: &Group) -> Option<GroupV
     })
 }
 
-fn moved(player: &Player) -> (usize, i32) {
+/// How many of a player's answers moved far enough to count as an update,
+/// and how far they moved in all, on the shared scale of `Statement::gap`.
+fn moved(game: &Game, player: &Player) -> (usize, i32) {
     player
         .answers
         .iter()
-        .filter_map(|(id, now)| player.first.get(id).map(|then| (now - then).abs()))
+        .filter_map(|(id, now)| {
+            let then = player.first.get(id)?;
+            Some(game.statement(*id)?.gap(*now, *then))
+        })
         .fold((0, 0), |(n, sum), d| {
             (n + (d >= UPDATE) as usize, sum + d as i32)
         })
 }
 
-/// The room's answers to one statement, as agreement: a probability is
-/// stretched onto -100 to 100 so spreads compare across the two kinds.
+/// The room's answers to one statement. Means are on the statement's own
+/// scale; the spread is on a common one, -100 to 100, so that spreads
+/// compare across the two kinds.
 fn tally<'a>(game: &'a Game, statement: &'a Statement) -> Option<Tally<'a>> {
-    let scale = |v: i16| -> f64 {
-        if statement.chance {
-            v as f64 * 2.0 - 100.0
-        } else {
-            v as f64
-        }
-    };
+    let scale = |v: i16| -> f64 { statement.norm(v) * 100.0 };
     let now: Vec<f64> = game
         .players
         .iter()
@@ -193,7 +193,7 @@ fn tally<'a>(game: &'a Game, statement: &'a Statement) -> Option<Tally<'a>> {
         .iter()
         .filter(
             |p| match (p.first.get(&statement.id), p.answers.get(&statement.id)) {
-                (Some(a), Some(b)) => (a - b).abs() >= UPDATE,
+                (Some(a), Some(b)) => statement.gap(*a, *b) >= UPDATE,
                 _ => false,
             },
         )
@@ -203,18 +203,14 @@ fn tally<'a>(game: &'a Game, statement: &'a Statement) -> Option<Tally<'a>> {
         if statement.chance {
             (v + 100.0) / 2.0
         } else {
-            v
+            v / 100.0 * 3.0 + 4.0
         }
     };
     Some(Tally {
         statement,
         n: now.len(),
         mean: back(mean),
-        spread: if statement.chance {
-            spread / 2.0
-        } else {
-            spread
-        },
+        spread,
         first_mean: back(first_mean),
         updated,
     })
@@ -240,7 +236,7 @@ pub fn host(game: &Game) -> HostView<'_> {
         .players
         .iter()
         .map(|p| {
-            let (updated, moved) = moved(p);
+            let (updated, moved) = moved(game, p);
             Who {
                 name: p.name.clone(),
                 answered: p.answers.len(),
@@ -292,7 +288,7 @@ pub fn host(game: &Game) -> HostView<'_> {
         round,
         rounds: game.rounds.len(),
         answers: game.players.iter().map(|p| p.answers.len()).sum(),
-        updates: game.players.iter().map(|p| moved(p).0).sum(),
+        updates: game.players.iter().map(|p| moved(game, p).0).sum(),
         players,
         leaders: leaders(game),
         contested: pick(&contested_ids),
@@ -455,7 +451,7 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<PlayerView<'a>> {
         found.truncate(OPPOSITES);
         found
     };
-    let (updated, moved) = moved(me);
+    let (updated, moved) = moved(game, me);
     let board = leaders(game);
     let rank = board.iter().position(|l| l.name == me.name).map(|i| i + 1);
     let persuaded = game.persuasion().get(key).copied().unwrap_or_default();
