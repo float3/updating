@@ -505,7 +505,7 @@ mod tests {
             &t.app,
             "PUT",
             &format!("/api/p/{bo}/answer"),
-            Some(json!({"id": 0, "value": -70})),
+            Some(json!({"id": 0, "value": 10})),
         )
         .await;
 
@@ -520,7 +520,7 @@ mod tests {
 
         let view = ok(&t.app, "GET", &format!("/api/p/{ada}"), None).await["view"].clone();
         assert_eq!(view["group"]["partners"][0]["name"], "Bo");
-        assert_eq!(view["group"]["partners"][0]["answer"], -70);
+        assert_eq!(view["group"]["partners"][0]["answer"], 10);
         assert_eq!(view["group"]["before"], 90);
 
         ok(&t.app, "POST", &format!("/api/h/{host}/stop"), None).await;
@@ -580,7 +580,7 @@ mod tests {
             &t.app,
             "PUT",
             &format!("/api/p/{bo}/answer"),
-            Some(json!({"id": 2, "value": -40})),
+            Some(json!({"id": 2, "value": 23})),
         )
         .await;
 
@@ -595,7 +595,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(!before.to_string().contains("-40"), "but not what or who");
+        assert!(
+            !before.to_string().contains("\"answer\":23"),
+            "but not what or who"
+        );
 
         let after = ok(
             &t.app,
@@ -606,7 +609,7 @@ mod tests {
         .await["view"]
             .clone();
         assert_eq!(after["squares"][2]["others"][0]["name"], "Bo");
-        assert_eq!(after["squares"][2]["others"][0]["answer"], -40);
+        assert_eq!(after["squares"][2]["others"][0]["answer"], 23);
         assert_eq!(
             after["opposites"][0]["name"], "Bo",
             "and Bo is the one to go and find"
@@ -667,7 +670,7 @@ mod tests {
             &t.app,
             "PUT",
             &format!("/api/p/{ada}/answer"),
-            Some(json!({"id": 1, "value": -20})),
+            Some(json!({"id": 1, "value": 20})),
         )
         .await;
         let again = router(App {
