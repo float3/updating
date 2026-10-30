@@ -111,6 +111,9 @@ pub struct HostView<'a> {
     players: Vec<Who>,
     contested: Vec<Tally<'a>>,
     shifted: Vec<Tally<'a>>,
+    /// What the most people have answered, which is where a free-for-all
+    /// room is converging.
+    popular: Vec<Tally<'a>>,
     answers: usize,
     updates: usize,
     leaders: Vec<Leader>,
@@ -256,6 +259,9 @@ pub fn host(game: &Game) -> HostView<'_> {
     let mut shifted: Vec<&Tally> = tallies.iter().filter(|t| t.updated > 0).collect();
     shifted.sort_by_key(|t| std::cmp::Reverse(t.updated));
     let shifted_ids: Vec<u32> = shifted.iter().take(5).map(|t| t.statement.id).collect();
+    let mut popular: Vec<&Tally> = tallies.iter().filter(|t| t.n >= 2).collect();
+    popular.sort_by_key(|t| std::cmp::Reverse(t.n));
+    let popular_ids: Vec<u32> = popular.iter().take(5).map(|t| t.statement.id).collect();
     let pick = |ids: &[u32]| -> Vec<Tally> {
         ids.iter()
             .filter_map(|&id| game.statement(id).and_then(|s| tally(game, s)))
@@ -291,6 +297,7 @@ pub fn host(game: &Game) -> HostView<'_> {
         leaders: leaders(game),
         contested: pick(&contested_ids),
         shifted: pick(&shifted_ids),
+        popular: pick(&popular_ids),
     }
 }
 
@@ -300,6 +307,17 @@ pub struct Square<'a> {
     answer: Option<i16>,
     first: Option<i16>,
     marked: bool,
+    /// In the free mode, how many other people have answered it.
+    count: usize,
+    /// In the free mode, and only once this player has answered it: who
+    /// else did, and what they said.
+    others: Vec<Seen>,
+}
+
+#[derive(Serialize)]
+pub struct Seen {
+    name: String,
+    answer: i16,
 }
 
 #[derive(Serialize)]
@@ -356,15 +374,37 @@ const OPPOSITES: usize = 5;
 
 pub fn player<'a>(game: &'a Game, key: &str) -> Option<PlayerView<'a>> {
     let me = game.player(key)?;
+    let free = game.mode == Mode::Free;
     let squares = game
         .hand(me)
         .into_iter()
         .filter_map(|id| {
+            let answer = me.answers.get(&id).copied();
+            let mut others: Vec<Seen> = Vec::new();
+            let mut count = 0;
+            if free {
+                for p in game.players.iter().filter(|p| p.key != key) {
+                    let Some(&theirs) = p.answers.get(&id) else {
+                        continue;
+                    };
+                    count += 1;
+                    // Not before answering: knowing who said what would
+                    // anchor the answer.
+                    if answer.is_some() {
+                        others.push(Seen {
+                            name: p.name.clone(),
+                            answer: theirs,
+                        });
+                    }
+                }
+            }
             Some(Square {
                 statement: game.statement(id)?,
-                answer: me.answers.get(&id).copied(),
+                answer,
                 first: me.first.get(&id).copied(),
                 marked: me.marked.contains(&id),
+                count,
+                others,
             })
         })
         .collect();

@@ -39,6 +39,11 @@ pub enum Mode {
     Bingo,
     /// Everybody answers whatever they like from the whole deck.
     Open,
+    /// Everybody browses the whole deck on their own time. Each statement
+    /// shows how many people have answered it, so the room converges on
+    /// the ones people care about, and who answered what is shown only to
+    /// people who have answered it themselves.
+    Free,
 }
 
 /// How the room answers its statements. Most can be put either way, so
@@ -315,7 +320,7 @@ impl Game {
     pub fn hand(&self, player: &Player) -> Vec<u32> {
         match self.mode {
             Mode::Bingo => player.card.clone(),
-            Mode::Open => self.deck.iter().map(|s| s.id).collect(),
+            Mode::Open | Mode::Free => self.deck.iter().map(|s| s.id).collect(),
         }
     }
 
@@ -332,7 +337,7 @@ impl Game {
         let all = statements(&self.topics, &self.custom, self.scale);
         let customs: Vec<&Statement> = all.iter().filter(|s| s.topic == "custom").collect();
         let mut picked: Vec<Statement> = match self.mode {
-            Mode::Open => all.clone(),
+            Mode::Open | Mode::Free => all.clone(),
             Mode::Bingo => {
                 let want = (self.side as usize).pow(2) * 2;
                 let mut bank: Vec<&Statement> =
@@ -1093,6 +1098,16 @@ mod tests {
                 assert!(!c.starts_with("What") && c.ends_with('.'), "{q} -> {c}");
             }
         }
+    }
+
+    #[test]
+    fn the_free_mode_takes_every_statement_like_the_open_one() {
+        let g = room(Mode::Free);
+        assert_eq!(g.deck.len(), room(Mode::Open).deck.len());
+        let mut g = g;
+        let k = g.join("A", 1).unwrap();
+        assert_eq!(g.hand(g.player(&k).unwrap()).len(), g.deck.len());
+        assert_eq!(g.lines(g.player(&k).unwrap()), 0);
     }
 
     #[test]

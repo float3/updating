@@ -555,6 +555,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_the_free_mode_who_answered_is_shown_only_after_answering() {
+        let t = test("free");
+        let (host, ada, bo) = ready(&t.app).await;
+        ok(
+            &t.app,
+            "PUT",
+            &format!("/api/h/{host}/setup"),
+            Some(json!({"mode": "free", "topics": ["mind"], "side": 4})),
+        )
+        .await;
+        ok(
+            &t.app,
+            "PUT",
+            &format!("/api/p/{bo}/answer"),
+            Some(json!({"id": 2, "value": -40})),
+        )
+        .await;
+
+        let before = ok(&t.app, "GET", &format!("/api/p/{ada}"), None).await["view"].clone();
+        assert_eq!(
+            before["squares"][2]["count"], 1,
+            "Ada sees that somebody answered"
+        );
+        assert!(
+            before["squares"][2]["others"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!before.to_string().contains("-40"), "but not what or who");
+
+        let after = ok(
+            &t.app,
+            "PUT",
+            &format!("/api/p/{ada}/answer"),
+            Some(json!({"id": 2, "value": 60})),
+        )
+        .await["view"]
+            .clone();
+        assert_eq!(after["squares"][2]["others"][0]["name"], "Bo");
+        assert_eq!(after["squares"][2]["others"][0]["answer"], -40);
+        assert_eq!(
+            after["opposites"][0]["name"], "Bo",
+            "and Bo is the one to go and find"
+        );
+    }
+
+    #[tokio::test]
     async fn suggestions_are_kept_on_disk_and_never_served() {
         let t = test("suggest");
         ok(
