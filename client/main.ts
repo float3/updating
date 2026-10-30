@@ -169,6 +169,7 @@ interface PlayerView {
   persuaded: Persuaded;
   rank: number | null;
   winners: Leader[];
+  next: number[];
 }
 
 /** What each mode is called on the facilitator's screen. */
@@ -736,9 +737,11 @@ function player(key: string): void {
     if (view.mode === "free") {
       const shelf = el("div", { id: "shelf" }, ...view.squares.map(make));
       list.replaceChildren(
+        el("div", { className: "chips", id: "tabs" }),
+        el("section", { className: "panel", id: "quick" }),
         el(
           "section",
-          { className: "panel" },
+          { className: "panel", id: "browse" },
           el("h2", {}, "Browse"),
           el(
             "p",
@@ -751,6 +754,7 @@ function player(key: string): void {
         ),
       );
       arrange(view);
+      tabs();
       return;
     }
     // In the open mode, one folding section per topic.
@@ -780,6 +784,108 @@ function player(key: string): void {
 
   let sort: Sort = "popular";
   let only = "all";
+  let tab: "quick" | "browse" = "quick";
+
+  const tabs = (): void => {
+    chips<"quick" | "browse">(
+      "tabs",
+      [
+        { value: "quick", label: "Quick fire", on: tab === "quick" },
+        { value: "browse", label: "Browse everything", on: tab === "browse" },
+      ],
+      (next) => {
+        tab = next;
+        tabs();
+        if (current) arrange(current);
+      },
+    );
+    hide("quick", tab !== "quick");
+    hide("browse", tab !== "browse");
+  };
+
+  // The quick-fire card. It stays on one statement until the player
+  // answers and moves on, or skips, however the feed's order changes.
+  let card: number | null = null;
+  let cardBuilt: number | null = null;
+  let cardSlider: HTMLInputElement | null = null;
+  let cardValue: HTMLElement | null = null;
+  let cardCrowd: HTMLElement | null = null;
+  let cardNext: HTMLButtonElement | null = null;
+  let cardCount: HTMLElement | null = null;
+
+  const pick = (view: PlayerView): void => {
+    card = view.next.find((id) => id !== card) ?? null;
+  };
+
+  const drawCard = (view: PlayerView): void => {
+    const box = document.getElementById("quick");
+    if (!box) return;
+    const answered = view.squares.filter((sq) => sq.answer !== null).length;
+    if (card === null) pick(view);
+    const sq = view.squares.find((q) => q.statement.id === card);
+    if (!sq) {
+      cardBuilt = null;
+      box.replaceChildren(
+        el("h2", {}, "That is all of them"),
+        el(
+          "p",
+          { className: "note" },
+          `You have answered ${answered} and skipped the rest. Browse everything to change an answer or go back to one you skipped.`,
+        ),
+      );
+      return;
+    }
+    if (cardBuilt !== sq.statement.id) {
+      cardBuilt = sq.statement.id;
+      const s = sq.statement;
+      cardValue = el("span", { className: "value" }, said(s, sq.answer));
+      cardSlider = slider(s, (v) => run(answer(s.id, v)), cardValue);
+      cardCrowd = el("p", { className: "crowd" });
+      const skip = el("button", { type: "button", className: "button" }, "Skip");
+      skip.addEventListener("click", () =>
+        run(
+          (async () => {
+            accept(await api("PUT", at("/skip"), { id: s.id }));
+            if (current) {
+              pick(current);
+              drawCard(current);
+            }
+          })(),
+        ),
+      );
+      cardNext = el("button", { type: "button", className: "button primary" }, "Next");
+      cardNext.addEventListener("click", () => {
+        if (!current) return;
+        pick(current);
+        drawCard(current);
+      });
+      cardCount = el("p", { className: "eyebrow" });
+      box.replaceChildren(
+        cardCount,
+        el("p", { className: "statement big-statement" }, s.text),
+        el(
+          "p",
+          { className: "note" },
+          `${new Map(view.topics).get(s.topic) ?? s.topic}${
+            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how likely is this to be true?") : ""
+          }`,
+        ),
+        cardSlider,
+        ends(s),
+        el("div", { className: "row-foot" }, cardValue),
+        cardCrowd,
+        el("div", { className: "actions" }, skip, cardNext),
+      );
+    }
+    if (cardSlider && cardSlider !== holding) {
+      cardSlider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 0));
+      cardSlider.classList.toggle("unset", sq.answer === null);
+      if (cardValue) cardValue.textContent = said(sq.statement, sq.answer);
+    }
+    if (cardCrowd) cardCrowd.textContent = crowdText(sq);
+    if (cardCount) cardCount.textContent = `Quick fire · ${answered} answered`;
+    if (cardNext) cardNext.disabled = sq.answer === null;
+  };
 
   /** Orders and filters the free mode's statements. Only when asked, not
    *  on every update, so nothing jumps under a finger. */
@@ -1083,6 +1189,7 @@ function player(key: string): void {
     }
     drawOpposites(view);
     drawGrid(view);
+    if (view.mode === "free") drawCard(view);
   };
   let drawnNow = "";
 

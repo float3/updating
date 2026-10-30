@@ -363,11 +363,16 @@ pub struct PlayerView<'a> {
     moved: i32,
     players: usize,
     persuaded: Persuaded,
+    /// In the free mode, the quick-fire feed's next statements, best first.
+    next: Vec<u32>,
     /// Their place on the persuasion board, once they have one.
     rank: Option<usize>,
     /// The board's top three, shown when the evening is over.
     winners: Vec<Leader>,
 }
+
+/// How many statements ahead the quick-fire feed is sent.
+const FEED: usize = 8;
 
 /// How many people a player is shown to go and find.
 const OPPOSITES: usize = 5;
@@ -482,5 +487,10 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<PlayerView<'a>> {
         persuaded,
         rank,
         winners,
+        next: if free {
+            game.feed(me, FEED)
+        } else {
+            Vec::new()
+        },
     })
 }

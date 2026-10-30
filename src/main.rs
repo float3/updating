@@ -138,6 +138,11 @@ struct Mark {
 }
 
 #[derive(Deserialize)]
+struct Skip {
+    id: u32,
+}
+
+#[derive(Deserialize)]
 struct Suggestion {
     text: String,
     #[serde(default)]
@@ -272,6 +277,11 @@ async fn mark(State(app): State<App>, Path(key): Path<String>, Json(m): Json<Mar
     .await
 }
 
+async fn skip(State(app): State<App>, Path(key): Path<String>, Json(s): Json<Skip>) -> Response {
+    let player = key.clone();
+    act_as(&app, &key, move |game, _| game.skip(&player, s.id)).await
+}
+
 /// Keeps a statement somebody would like added, one JSON line each, for
 /// whoever runs the server to read. Nothing reads it back over the web.
 async fn suggest(State(app): State<App>, Json(s): Json<Suggestion>) -> Response {
@@ -362,6 +372,7 @@ fn router(app: App) -> Router {
         .route("/api/p/{key}/events", get(player_events))
         .route("/api/p/{key}/answer", put(answer))
         .route("/api/p/{key}/mark", put(mark))
+        .route("/api/p/{key}/skip", put(skip))
         .with_state(app)
 }
 

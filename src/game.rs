@@ -109,6 +109,10 @@ pub struct Player {
     pub first: BTreeMap<u32, i16>,
     /// Statements they have talked about, in a round or on their own.
     pub marked: BTreeSet<u32>,
+    /// Statements they passed on in the quick-fire feed, which it does
+    /// not show them again.
+    #[serde(default)]
+    pub skipped: BTreeSet<u32>,
 }
 
 /// Two people, sometimes three, and what they were given to talk about.
@@ -471,6 +475,7 @@ impl Game {
             answers: BTreeMap::new(),
             first: BTreeMap::new(),
             marked: BTreeSet::new(),
+            skipped: BTreeSet::new(),
         });
         self.deal(&key);
         self.last_seen = now;
@@ -499,6 +504,7 @@ impl Game {
                     return Err("That answer is off the scale.");
                 }
                 player.answers.insert(id, v);
+                player.skipped.remove(&id);
                 player.first.entry(id).or_insert(v);
             }
             None => {
@@ -518,6 +524,86 @@ impl Game {
             };
         }
         Ok(())
+    }
+
+    /// Passes on a statement in the quick-fire feed.
+    pub fn skip(&mut self, key: &str, id: u32) -> Result<(), &'static str> {
+        if self.statement(id).is_none() {
+            return Err("That statement is not in this room.");
+        }
+        let player = self.player_mut(key)?;
+        if !player.answers.contains_key(&id) {
+            player.skipped.insert(id);
+        }
+        Ok(())
+    }
+
+    /// The statements to show this player next in the quick-fire feed,
+    /// best first.
+    ///
+    /// A large deck only gets people talking if they answer the same
+    /// statements, so the feed leans towards what others have answered,
+    /// most of all where they disagree, and towards the topics this player
+    /// keeps answering. A little noise, fixed until the player answers or
+    /// skips, keeps two phones from showing the same order. Every fourth
+    /// card is instead one that few people have answered, so that new
+    /// statements get their first answers too.
+    pub fn feed(&self, player: &Player, n: usize) -> Vec<u32> {
+        let acted = (player.answers.len() + player.skipped.len()) as u64;
+        let mine: Vec<&Statement> = player
+            .answers
+            .keys()
+            .filter_map(|&id| self.statement(id))
+            .collect();
+        let affinity = |topic: &str| -> f64 {
+            if mine.is_empty() {
+                return 0.0;
+            }
+            mine.iter().filter(|s| s.topic == topic).count() as f64 / mine.len() as f64
+        };
+        let mut scored: Vec<(f64, usize, u32)> = Vec::new();
+        for s in &self.deck {
+            if player.answers.contains_key(&s.id) || player.skipped.contains(&s.id) {
+                continue;
+            }
+            // Others' answers on one scale, -1 to 1.
+            let theirs: Vec<f64> = self
+                .players
+                .iter()
+                .filter(|p| p.key != player.key)
+                .filter_map(|p| p.answers.get(&s.id))
+                .map(|&v| {
+                    if s.chance {
+                        v as f64 / 50.0 - 1.0
+                    } else {
+                        v as f64 / 100.0
+                    }
+                })
+                .collect();
+            let count = theirs.len();
+            let spread = if count >= 2 {
+                let mean = theirs.iter().sum::<f64>() / count as f64;
+                (theirs.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / count as f64).sqrt()
+            } else {
+                0.0
+            };
+            let noise =
+                (mix(hash(&player.key) ^ (s.id as u64) << 20 ^ acted) % 1000) as f64 / 1000.0;
+            let score = (1.0 + count as f64).ln() + spread + 0.6 * affinity(&s.topic) + 0.5 * noise;
+            scored.push((score, count, s.id));
+        }
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut order: Vec<u32> = scored.iter().map(|&(_, _, id)| id).collect();
+        if acted % 4 == 3
+            && let Some(&(_, _, rare)) = scored
+                .iter()
+                .min_by(|a, b| a.1.cmp(&b.1).then(b.0.total_cmp(&a.0)))
+        {
+            order.retain(|&id| id != rare);
+            order.insert(0, rare);
+        }
+        order.truncate(n);
+        order
     }
 
     /// Marks a statement as talked about, or unmarks it.
@@ -1108,6 +1194,56 @@ mod tests {
         let k = g.join("A", 1).unwrap();
         assert_eq!(g.hand(g.player(&k).unwrap()).len(), g.deck.len());
         assert_eq!(g.lines(g.player(&k).unwrap()), 0);
+    }
+
+    #[test]
+    fn the_feed_leads_with_what_others_answered_and_skips_what_you_have() {
+        let mut g = room(Mode::Free);
+        let ids: Vec<u32> = g.deck.iter().filter(|s| !s.chance).map(|s| s.id).collect();
+        let me = g.join("Me", 1).unwrap();
+        let others: Vec<String> = (0..4)
+            .map(|i| g.join(&format!("O{i}"), 1).unwrap())
+            .collect();
+        // Everybody answered ids[5]; two answered ids[7], far apart.
+        for k in &others {
+            g.answer(k, ids[5], Some(10)).unwrap();
+        }
+        g.answer(&others[0], ids[7], Some(100)).unwrap();
+        g.answer(&others[1], ids[7], Some(-100)).unwrap();
+        // The split one leads: two people at opposite ends make a better
+        // conversation than four who agree.
+        let feed = g.feed(g.player(&me).unwrap(), 5);
+        assert_eq!(feed[..2], [ids[7], ids[5]]);
+
+        g.answer(&me, ids[5], Some(0)).unwrap();
+        g.skip(&me, ids[7]).unwrap();
+        let feed = g.feed(g.player(&me).unwrap(), 50);
+        assert!(!feed.contains(&ids[5]) && !feed.contains(&ids[7]));
+        assert_eq!(
+            g.feed(g.player(&me).unwrap(), 5),
+            g.feed(g.player(&me).unwrap(), 5),
+            "stable"
+        );
+    }
+
+    #[test]
+    fn every_fourth_card_is_one_few_have_answered() {
+        let mut g = room(Mode::Free);
+        let ids: Vec<u32> = g.deck.iter().filter(|s| !s.chance).map(|s| s.id).collect();
+        let me = g.join("Me", 1).unwrap();
+        let other = g.join("O", 1).unwrap();
+        for &id in &ids[3..] {
+            g.answer(&other, id, Some(50)).unwrap();
+        }
+        for &id in &ids[..3] {
+            g.skip(&me, id).unwrap();
+        }
+        // Three acted on, so this is the fourth card: one nobody answered.
+        let first = g.feed(g.player(&me).unwrap(), 1)[0];
+        assert!(
+            !g.player(&other).unwrap().answers.contains_key(&first),
+            "{first}"
+        );
     }
 
     #[test]

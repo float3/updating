@@ -227,3 +227,17 @@ details.topic small {
   padding: 4px 12px;
   font-size: 0.85rem;
 }
+
+/* The quick-fire card: one statement, large. */
+.big-statement {
+  font-size: 1.5rem;
+  margin: 10px 0 6px;
+}
+
+#quick .crowd {
+  min-height: 3em;
+}
+
+#tabs {
+  margin-top: 16px;
+}
