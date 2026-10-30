@@ -19,7 +19,7 @@ wall. everyone scans it and gives a name, then answers statements:
 
 | | |
 | --- | --- |
-| as a probability, the default | how confident you are that it is true, 0 to 100% |
+| as a probability, the default | how confident you are that it is true, 0 to 100%; 50% means no idea either way |
 | as agreement | from 1, strongly disagree, to 7, strongly agree |
 
 most statements can be put either way, so the facilitator chooses. a room
