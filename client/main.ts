@@ -186,32 +186,32 @@ const PHASES: Record<Phase, string> = {
   finished: "Finished",
 };
 
-/** An answer in words: "+60, agree" or "35%". */
+/** The seven points of the agreement scale, 1 to 7. */
+const AGREE = [
+  "strongly disagree",
+  "disagree",
+  "somewhat disagree",
+  "neutral",
+  "somewhat agree",
+  "agree",
+  "strongly agree",
+];
+
+/** An answer in words: "6 · agree" or "35%". */
 function said(statement: Statement, value: number | null): string {
   if (value === null) return "not answered";
   if (statement.chance) return `${value}%`;
-  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
-  const size = Math.abs(value);
-  const word =
-    value === 0
-      ? "neutral"
-      : size >= 70
-        ? value > 0
-          ? "strongly agree"
-          : "strongly disagree"
-        : size >= 30
-          ? value > 0
-            ? "agree"
-            : "disagree"
-          : value > 0
-            ? "lean agree"
-            : "lean disagree";
-  return `${sign}${size}, ${word}`;
+  return `${value} · ${AGREE[Math.min(7, Math.max(1, Math.round(value))) - 1]}`;
+}
+
+/** The same, as short as it goes: "6" or "35%". */
+function brief(statement: Statement, value: number): string {
+  return statement.chance ? `${value}%` : String(value);
 }
 
 /** Where an answer sits between its two ends, 0 to 1, for colouring. */
 function lean(statement: Statement, value: number): number {
-  return statement.chance ? value / 100 : (value + 100) / 200;
+  return statement.chance ? value / 100 : (value - 1) / 6;
 }
 
 /** Runs a countdown off the server's clock into every element given. */
@@ -324,7 +324,7 @@ function host(key: string): void {
       "scales",
       [
         { value: "written", label: "As written", on: d.scale === "written" },
-        { value: "agree", label: "All agree / disagree", on: d.scale === "agree" },
+        { value: "agree", label: "All agree / disagree, 1–7", on: d.scale === "agree" },
         { value: "chance", label: "All probabilities", on: d.scale === "chance" },
       ],
       (scale) => {
@@ -335,10 +335,10 @@ function host(key: string): void {
     text(
       "scale-note",
       d.scale === "written"
-        ? "Most statements are agree or disagree, from −100 to 100; questions starting “What is the chance” ask for a probability."
+        ? "Most statements are agree or disagree, from 1 to 7; questions starting “What is the chance” ask for a probability."
         : d.scale === "agree"
           ? "Every statement is agree or disagree. Probability questions become claims: “A fish feels pain.”"
-          : "Every statement is answered with the chance that it is true, from 0 to 100%.",
+          : "Every statement is answered with how confident people are that it is true, from 0 to 100%. Recommended: a probability means the same to everybody.",
     );
     chips<string>(
       "topics",
@@ -383,7 +383,9 @@ function host(key: string): void {
   });
 
   const gapNote = (g: GroupView): string =>
-    g.statement.chance ? `${g.gap / 2} points apart` : `${g.gap} points apart`;
+    g.statement.chance
+      ? `${g.gap / 2} percentage points apart`
+      : `${plural(Math.round((g.gap * 3) / 100), "step", "steps")} apart`;
 
   const drawGroups = (view: HostView): void => {
     const box = byId("groups");
@@ -530,8 +532,8 @@ function host(key: string): void {
           : null,
         tallyList("What people changed their minds on", view.shifted, (t) =>
           `${plural(t.updated, "person", "people")} moved; the average went from ${
-            t.statement.chance ? `${round1(t.first_mean)}%` : round1(t.first_mean)
-          } to ${t.statement.chance ? `${round1(t.mean)}%` : round1(t.mean)}`,
+            t.statement.chance ? `${round1(t.first_mean)}%` : t.first_mean.toFixed(1)
+          } to ${t.statement.chance ? `${round1(t.mean)}%` : t.mean.toFixed(1)}`,
         ),
         view.players.length ? people : null,
       ].filter((n): n is HTMLElement => n !== null),
@@ -656,9 +658,9 @@ function player(key: string): void {
   const slider = (s: Statement, onSend: (v: number) => void, label: HTMLElement): HTMLInputElement => {
     const input = el("input", {
       type: "range",
-      min: s.chance ? "0" : "-100",
-      max: "100",
-      step: s.chance ? "1" : "5",
+      min: s.chance ? "0" : "1",
+      max: s.chance ? "100" : "7",
+      step: "1",
       className: "scale unset",
     });
     input.setAttribute("aria-label", s.text);
@@ -680,8 +682,8 @@ function player(key: string): void {
     el(
       "div",
       { className: "ends" },
-      el("span", {}, s.chance ? "0%" : "Disagree"),
-      el("span", {}, s.chance ? "100%" : "Agree"),
+      el("span", {}, s.chance ? "0%" : "1 · disagree"),
+      el("span", {}, s.chance ? "100%" : "agree · 7"),
     );
 
   /** Builds the list once per deck; later views only set its values. */
@@ -708,7 +710,7 @@ function player(key: string): void {
           "p",
           { className: "note" },
           `${names.get(s.topic) ?? s.topic}${
-            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how likely is this to be true?") : ""
+            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how confident are you that this is true?") : ""
           }`,
         ),
         input,
@@ -867,7 +869,7 @@ function player(key: string): void {
           "p",
           { className: "note" },
           `${new Map(view.topics).get(s.topic) ?? s.topic}${
-            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how likely is this to be true?") : ""
+            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how confident are you that this is true?") : ""
           }`,
         ),
         cardSlider,
@@ -878,7 +880,7 @@ function player(key: string): void {
       );
     }
     if (cardSlider && cardSlider !== holding) {
-      cardSlider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 0));
+      cardSlider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 4));
       cardSlider.classList.toggle("unset", sq.answer === null);
       if (cardValue) cardValue.textContent = said(sq.statement, sq.answer);
     }
@@ -946,10 +948,11 @@ function player(key: string): void {
     );
     const shown = sorted
       .slice(0, 6)
-      .map((o) => `${o.name} ${said(sq.statement, o.answer).split(",")[0]}`);
+      .map((o) => `${o.name} ${brief(sq.statement, o.answer)}`);
     const more = sorted.length > 6 ? ` and ${sorted.length - 6} more` : "";
     const mean = sq.others.reduce((sum, o) => sum + o.answer, 0) / sq.others.length;
-    return `${plural(sq.others.length, "other", "others")}, furthest from you first: ${shown.join(", ")}${more}. Their average: ${said(sq.statement, Math.round(mean))}.`;
+    const average = sq.statement.chance ? `${Math.round(mean)}%` : mean.toFixed(1);
+    return `${plural(sq.others.length, "other", "others")}, furthest from you first: ${shown.join(", ")}${more}. Their average: ${average}.`;
   };
 
   const drawGrid = (view: PlayerView): void => {
@@ -1148,7 +1151,7 @@ function player(key: string): void {
       if (!row) continue;
       row.slider.disabled = finished;
       if (row.slider !== holding) {
-        row.slider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 0));
+        row.slider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 4));
         row.slider.classList.toggle("unset", sq.answer === null);
         row.value.textContent = said(sq.statement, sq.answer);
       }

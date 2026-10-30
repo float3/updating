@@ -3,8 +3,9 @@
 //!
 //! The facilitator picks topics. Each person either gets a bingo card, a
 //! grid of statements dealt to them, or answers as many statements from
-//! the room's deck as they like. An answer is agreement from -100 to 100,
-//! or, for a question asking for a probability, a chance from 0 to 100.
+//! the room's deck as they like. An answer is a probability, 0 to 100,
+//! which is how a room answers by default, or agreement on a scale of 1
+//! (strongly disagree) to 7 (strongly agree).
 //!
 //! In a round the server pairs everybody with the person they disagree
 //! with most, on the statement they are furthest apart on, and a timer
@@ -28,8 +29,10 @@ pub const SIDES: &[u8] = &[3, 4, 5];
 pub const MINUTES: &[u32] = &[2, 3, 4, 5, 7, 10];
 /// How much a round is extended by.
 pub const EXTRA_MS: u64 = 60_000;
-/// How far an answer has to move to count as an update.
-pub const UPDATE: i16 = 10;
+/// How far an answer has to move to count as an update, on the shared
+/// scale of `Statement::gap`: one step of agreement, or ten points of
+/// probability.
+pub const UPDATE: i16 = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -52,11 +55,15 @@ pub enum Mode {
 #[serde(rename_all = "kebab-case")]
 pub enum Scale {
     /// Each as the bank has it: mostly agreement, some probabilities.
-    #[default]
     Written,
-    /// Everything as agreement; probability questions become claims.
+    /// Everything as agreement from 1 to 7; probability questions become
+    /// claims.
     Agree,
-    /// Everything as the chance that it is true.
+    /// Everything as the chance that it is true, which is how a room
+    /// starts: a probability means the same to everybody, and asking how
+    /// sure people are makes for better conversations than asking whether
+    /// they agree.
+    #[default]
     Chance,
 }
 
@@ -78,21 +85,31 @@ pub struct Statement {
     pub id: u32,
     pub text: String,
     pub topic: String,
-    /// Answered as a probability, 0 to 100, rather than agreement.
+    /// Answered as a probability, 0 to 100, rather than as agreement from
+    /// 1 to 7.
     #[serde(default)]
     pub chance: bool,
 }
 
 impl Statement {
     pub fn range(&self) -> (i16, i16) {
-        if self.chance { (0, 100) } else { (-100, 100) }
+        if self.chance { (0, 100) } else { (1, 7) }
     }
 
-    /// How far apart two answers are, on one scale for both kinds: a
-    /// probability's range is half as wide, so its gaps count double.
+    /// How far apart two answers are, on one scale for both kinds, 0 to
+    /// 200: from one end of either scale to the other is 200.
     pub fn gap(&self, a: i16, b: i16) -> i16 {
         let d = (a - b).abs();
-        if self.chance { d * 2 } else { d }
+        if self.chance { d * 2 } else { d * 100 / 3 }
+    }
+
+    /// An answer on a common scale, -1 to 1.
+    pub fn norm(&self, v: i16) -> f64 {
+        if self.chance {
+            v as f64 / 50.0 - 1.0
+        } else {
+            (v as f64 - 4.0) / 3.0
+        }
     }
 }
 
@@ -291,7 +308,7 @@ impl Game {
             deck: Vec::new(),
             topics,
             custom: Vec::new(),
-            scale: Scale::Written,
+            scale: Scale::Chance,
             side: 4,
             minutes: 5,
             players: Vec::new(),
@@ -572,13 +589,7 @@ impl Game {
                 .iter()
                 .filter(|p| p.key != player.key)
                 .filter_map(|p| p.answers.get(&s.id))
-                .map(|&v| {
-                    if s.chance {
-                        v as f64 / 50.0 - 1.0
-                    } else {
-                        v as f64 / 100.0
-                    }
-                })
+                .map(|&v| s.norm(v))
                 .collect();
             let count = theirs.len();
             let spread = if count >= 2 {
@@ -988,12 +999,14 @@ mod tests {
         let chance = g.deck.iter().find(|s| s.chance).unwrap().id;
         let agree = g.deck.iter().find(|s| !s.chance).unwrap().id;
         assert!(g.answer(&k, chance, Some(-5)).is_err());
-        assert!(g.answer(&k, agree, Some(101)).is_err());
-        g.answer(&k, agree, Some(-60)).unwrap();
-        g.answer(&k, agree, Some(20)).unwrap();
+        assert!(g.answer(&k, chance, Some(101)).is_err());
+        assert!(g.answer(&k, agree, Some(0)).is_err());
+        assert!(g.answer(&k, agree, Some(8)).is_err());
+        g.answer(&k, agree, Some(2)).unwrap();
+        g.answer(&k, agree, Some(5)).unwrap();
         let p = g.player(&k).unwrap();
-        assert_eq!(p.first[&agree], -60);
-        assert_eq!(p.answers[&agree], 20);
+        assert_eq!(p.first[&agree], 2);
+        assert_eq!(p.answers[&agree], 5);
         assert!(
             g.setup(Mode::Bingo, Scale::Written, &["ea".into()], "", 3)
                 .is_err(),
@@ -1011,10 +1024,7 @@ mod tests {
             .map(|n| g.join(n, 1).unwrap())
             .collect();
         // A and D are opposite on s; B and C on t; E agrees with A on s.
-        for (k, (vs, vt)) in keys
-            .iter()
-            .zip([(100, 0), (0, 90), (0, -90), (-100, 0), (90, 0)])
-        {
+        for (k, (vs, vt)) in keys.iter().zip([(7, 4), (4, 7), (4, 1), (1, 4), (7, 4)]) {
             g.answer(k, s, Some(vs)).unwrap();
             g.answer(k, t, Some(vt)).unwrap();
         }
@@ -1049,16 +1059,16 @@ mod tests {
         let s = g.deck.iter().find(|s| !s.chance).unwrap().id;
         let a = g.join("A", 1).unwrap();
         let b = g.join("B", 1).unwrap();
-        g.answer(&a, s, Some(80)).unwrap();
-        g.answer(&b, s, Some(-80)).unwrap();
+        g.answer(&a, s, Some(7)).unwrap();
+        g.answer(&b, s, Some(1)).unwrap();
         g.start_round(0).unwrap();
         assert!(!g.tick(1000));
         assert!(g.tick(g.ends));
         assert_eq!(g.phase, Phase::Updating);
-        g.answer(&a, s, Some(30)).unwrap();
+        g.answer(&a, s, Some(5)).unwrap();
         let group = &g.rounds[0].groups[0];
-        assert_eq!(group.before[&a], 80);
-        assert_eq!(group.after[&a], 30);
+        assert_eq!(group.before[&a], 7);
+        assert_eq!(group.after[&a], 5);
     }
 
     #[test]
@@ -1069,7 +1079,7 @@ mod tests {
             .iter()
             .map(|n| g.join(n, 1).unwrap())
             .collect();
-        for (k, v) in keys.iter().zip([100, -100, 50, -50]) {
+        for (k, v) in keys.iter().zip([7, 1, 6, 2]) {
             g.answer(k, s, Some(v)).unwrap();
         }
         g.start_round(0).unwrap();
@@ -1105,12 +1115,12 @@ mod tests {
             .collect();
         // A and B are furthest apart, on s0; C shares s1 only with A, and
         // D shares s2 only with B. Greedy alone would leave C and D out.
-        g.answer(&keys[0], ids[0], Some(100)).unwrap();
-        g.answer(&keys[1], ids[0], Some(-100)).unwrap();
-        g.answer(&keys[0], ids[1], Some(0)).unwrap();
-        g.answer(&keys[2], ids[1], Some(40)).unwrap();
-        g.answer(&keys[1], ids[2], Some(0)).unwrap();
-        g.answer(&keys[3], ids[2], Some(40)).unwrap();
+        g.answer(&keys[0], ids[0], Some(7)).unwrap();
+        g.answer(&keys[1], ids[0], Some(1)).unwrap();
+        g.answer(&keys[0], ids[1], Some(4)).unwrap();
+        g.answer(&keys[2], ids[1], Some(5)).unwrap();
+        g.answer(&keys[1], ids[2], Some(4)).unwrap();
+        g.answer(&keys[3], ids[2], Some(5)).unwrap();
         g.start_round(0).unwrap();
         let r = &g.rounds[0];
         assert!(r.waiting.is_empty(), "{:?}", r.waiting);
@@ -1123,15 +1133,16 @@ mod tests {
         let s = g.deck.iter().find(|s| !s.chance).unwrap().id;
         let a = g.join("A", 1).unwrap();
         let b = g.join("B", 1).unwrap();
-        g.answer(&a, s, Some(80)).unwrap();
-        g.answer(&b, s, Some(-80)).unwrap();
+        g.answer(&a, s, Some(6)).unwrap();
+        g.answer(&b, s, Some(1)).unwrap();
         g.start_round(0).unwrap();
         g.stop().unwrap();
-        // B comes 60 of the 160 points towards A; A moves away from B.
-        g.answer(&b, s, Some(-20)).unwrap();
-        g.answer(&a, s, Some(100)).unwrap();
+        // B comes two of the five steps towards A, which is 166 - 100
+        // points; A moves away from B.
+        g.answer(&b, s, Some(3)).unwrap();
+        g.answer(&a, s, Some(7)).unwrap();
         let p = g.persuasion();
-        assert_eq!(p[&a].points, 60);
+        assert_eq!(p[&a].points, 66);
         assert_eq!(p[&a].people, 1);
         assert!(!p.contains_key(&b), "moving away gives the partner nothing");
     }
@@ -1206,16 +1217,16 @@ mod tests {
             .collect();
         // Everybody answered ids[5]; two answered ids[7], far apart.
         for k in &others {
-            g.answer(k, ids[5], Some(10)).unwrap();
+            g.answer(k, ids[5], Some(5)).unwrap();
         }
-        g.answer(&others[0], ids[7], Some(100)).unwrap();
-        g.answer(&others[1], ids[7], Some(-100)).unwrap();
+        g.answer(&others[0], ids[7], Some(7)).unwrap();
+        g.answer(&others[1], ids[7], Some(1)).unwrap();
         // The split one leads: two people at opposite ends make a better
         // conversation than four who agree.
         let feed = g.feed(g.player(&me).unwrap(), 5);
         assert_eq!(feed[..2], [ids[7], ids[5]]);
 
-        g.answer(&me, ids[5], Some(0)).unwrap();
+        g.answer(&me, ids[5], Some(4)).unwrap();
         g.skip(&me, ids[7]).unwrap();
         let feed = g.feed(g.player(&me).unwrap(), 50);
         assert!(!feed.contains(&ids[5]) && !feed.contains(&ids[7]));
@@ -1233,7 +1244,7 @@ mod tests {
         let me = g.join("Me", 1).unwrap();
         let other = g.join("O", 1).unwrap();
         for &id in &ids[3..] {
-            g.answer(&other, id, Some(50)).unwrap();
+            g.answer(&other, id, Some(6)).unwrap();
         }
         for &id in &ids[..3] {
             g.skip(&me, id).unwrap();
@@ -1247,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_probability_gap_counts_double() {
+    fn both_scales_span_the_same_gap() {
         let s = Statement {
             id: 0,
             text: String::new(),
@@ -1255,5 +1266,10 @@ mod tests {
             chance: true,
         };
         assert_eq!(s.gap(10, 60), 100);
+        assert_eq!(s.gap(0, 100), 200);
+        let agree = Statement { chance: false, ..s };
+        assert_eq!(agree.gap(1, 7), 200);
+        assert_eq!(agree.gap(4, 5), 33);
+        assert_eq!(agree.norm(4), 0.0);
     }
 }
