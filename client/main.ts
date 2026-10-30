@@ -200,7 +200,7 @@ const AGREE = [
 /** An answer in words: "6 · agree" or "35%". */
 function said(statement: Statement, value: number | null): string {
   if (value === null) return "not answered";
-  if (statement.chance) return `${value}%`;
+  if (statement.chance) return value === 50 ? "50% · no idea either way" : `${value}%`;
   return `${value} · ${AGREE[Math.min(7, Math.max(1, Math.round(value))) - 1]}`;
 }
 
@@ -338,7 +338,7 @@ function host(key: string): void {
         ? "Most statements are agree or disagree, from 1 to 7; questions starting “What is the chance” ask for a probability."
         : d.scale === "agree"
           ? "Every statement is agree or disagree. Probability questions become claims: “A fish feels pain.”"
-          : "Every statement is answered with how confident people are that it is true, from 0 to 100%. Recommended: a probability means the same to everybody.",
+          : "Every statement is answered with how confident people are that it is true, from 0 to 100%, where 50% means no idea either way. Recommended: a probability means the same to everybody.",
     );
     chips<string>(
       "topics",
@@ -682,8 +682,9 @@ function player(key: string): void {
     el(
       "div",
       { className: "ends" },
-      el("span", {}, s.chance ? "0%" : "1 · disagree"),
-      el("span", {}, s.chance ? "100%" : "agree · 7"),
+      el("span", {}, s.chance ? "0% · surely false" : "1 · disagree"),
+      ...(s.chance ? [el("span", {}, "50% · no idea")] : []),
+      el("span", {}, s.chance ? "surely true · 100%" : "agree · 7"),
     );
 
   /** Builds the list once per deck; later views only set its values. */
