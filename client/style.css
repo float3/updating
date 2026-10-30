@@ -241,3 +241,27 @@ details.topic small {
 #tabs {
   margin-top: 16px;
 }
+
+/* On a phone the tables are squeezed to fit rather than scrolled
+ * sideways: headings wrap, and the cells give up some padding. */
+@media (max-width: 559px) {
+  table {
+    font-size: 0.85rem;
+  }
+
+  th,
+  td {
+    padding: 8px 4px;
+  }
+
+  thead th {
+    white-space: normal;
+    letter-spacing: 0.02em;
+    font-size: 0.65rem;
+    vertical-align: bottom;
+  }
+
+  td:first-child {
+    overflow-wrap: anywhere;
+  }
+}
