@@ -33,6 +33,23 @@ in the **bingo** mode each person is dealt a grid of statements, 3×3 to
 bingo. in the **open** mode everybody sees every statement from the chosen
 topics and answers as many as they like.
 
+the **free-for-all** mode is for browsing on your own time, over an
+evening or longer. every statement shows how many people have answered
+it, and the most answered come first, so a room with a large deck
+converges on the statements people care about. you see who answered a
+statement, and what they said, only after answering it yourself: knowing
+it first would anchor your answer. each phone keeps pointing its owner at
+whoever disagrees with them most ("Josh, go and talk to Jake"), and the
+facilitator can still run timed rounds when the room wants them.
+
+by default the free-for-all mode deals statements one at a time, quick
+fire: answer and see straight away who else answered it and where they
+stand, or skip it. the next card leans towards what others have answered,
+most of all where they disagree, and towards the topics you keep
+answering, with a little noise so two phones do not show the same order;
+every fourth card is one few people have answered, so new statements get
+their first answers too. browsing everything by topic is the other tab.
+
 the facilitator starts a round. the server pairs everybody with the person
 they disagree with most, on the statement they are furthest apart on, and
 a clock runs: two to ten minutes. when it runs out, each phone asks how

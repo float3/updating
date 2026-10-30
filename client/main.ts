@@ -24,7 +24,7 @@ import {
   watch,
 } from "./rooms";
 
-type Mode = "bingo" | "open";
+type Mode = "bingo" | "open" | "free";
 type Scale = "written" | "agree" | "chance";
 type Phase = "answering" | "talking" | "updating" | "finished";
 
@@ -108,9 +108,15 @@ interface HostView {
   players: Who[];
   contested: Tally[];
   shifted: Tally[];
+  popular: Tally[];
   answers: number;
   updates: number;
   leaders: Leader[];
+}
+
+interface Seen {
+  name: string;
+  answer: number;
 }
 
 interface Square {
@@ -118,6 +124,8 @@ interface Square {
   answer: number | null;
   first: number | null;
   marked: boolean;
+  count: number;
+  others: Seen[];
 }
 
 interface Partner {
@@ -161,7 +169,15 @@ interface PlayerView {
   persuaded: Persuaded;
   rank: number | null;
   winners: Leader[];
+  next: number[];
 }
+
+/** What each mode is called on the facilitator's screen. */
+const MODES: Record<Mode, (side: number) => string> = {
+  bingo: (side) => `A ${side}×${side} bingo card each`,
+  open: () => "Answer anything",
+  free: () => "Free for all",
+};
 
 const PHASES: Record<Phase, string> = {
   answering: "Answering",
@@ -274,7 +290,7 @@ function host(key: string): void {
     const chosen = view.topics.filter((t) => t.chosen).map((t) => t.name);
     text(
       "locked-note",
-      `${view.mode === "bingo" ? `A ${view.side}×${view.side} bingo card each` : "Answer anything"}, from ${plural(view.deck, "statement", "statements")}: ${chosen.join(", ") || "your own"}. People have started answering, so this stays as it is.`,
+      `${MODES[view.mode](view.side)}, from ${plural(view.deck, "statement", "statements")}: ${chosen.join(", ") || "your own"}. People have started answering, so this stays as it is.`,
     );
     if (view.locked) return;
     draft ??= {
@@ -289,6 +305,7 @@ function host(key: string): void {
       [
         { value: "bingo", label: "Bingo card", on: d.mode === "bingo" },
         { value: "open", label: "Answer anything", on: d.mode === "open" },
+        { value: "free", label: "Free for all", on: d.mode === "free" },
       ],
       (mode) => {
         d.mode = mode;
@@ -299,7 +316,9 @@ function host(key: string): void {
       "mode-note",
       d.mode === "bingo"
         ? "Everyone is dealt a grid from the topics below. What they talk about is marked; a full line is a bingo."
-        : "Everyone sees every statement from the topics below and answers as many as they like.",
+        : d.mode === "open"
+          ? "Everyone sees every statement from the topics below and answers as many as they like."
+          : "Everyone browses every statement on their own time. Each shows how many people have answered it, the most answered first, and who said what once you have answered it yourself. Phones point people at whoever disagrees with them most; rounds are optional.",
     );
     chips<Scale>(
       "scales",
@@ -351,7 +370,7 @@ function host(key: string): void {
     }
     text(
       "setup-note",
-      `In use now: ${view.mode === "bingo" ? `${view.side}×${view.side} cards` : "answer anything"}, ${plural(view.deck, "statement", "statements")}. This can change until somebody answers.`,
+      `In use now: ${MODES[view.mode](view.side).toLowerCase()}, ${plural(view.deck, "statement", "statements")}. This can change until somebody answers.`,
     );
   };
 
@@ -504,6 +523,11 @@ function host(key: string): void {
         tallyList("Where the room is most split", view.contested, (t) =>
           `${plural(t.n, "answer", "answers")}, ${scale(t)}, spread ${round1(t.spread)}`,
         ),
+        view.mode === "free"
+          ? tallyList("What people are answering most", view.popular, (t) =>
+              `${plural(t.n, "answer", "answers")}, ${scale(t)}, spread ${round1(t.spread)}`,
+            )
+          : null,
         tallyList("What people changed their minds on", view.shifted, (t) =>
           `${plural(t.updated, "person", "people")} moved; the average went from ${
             t.statement.chance ? `${round1(t.first_mean)}%` : round1(t.first_mean)
@@ -595,8 +619,12 @@ interface Row {
   slider: HTMLInputElement;
   value: HTMLElement;
   mark: HTMLButtonElement | null;
+  /** In the free mode: how many answered, and who once you have. */
+  crowd: HTMLElement | null;
   statement: Statement;
 }
+
+type Sort = "popular" | "unanswered" | "topic";
 
 function player(key: string): void {
   show("player");
@@ -687,7 +715,9 @@ function player(key: string): void {
         ends(s),
         el("div", { className: "row-foot" }, value, el("span", {}, mark ?? "", clear)),
       );
-      rows.set(s.id, { box, slider: input, value, mark, statement: s });
+      const crowd = view.mode === "free" ? el("p", { className: "crowd" }) : null;
+      if (crowd) box.append(crowd);
+      rows.set(s.id, { box, slider: input, value, mark, crowd, statement: s });
       return box;
     };
 
@@ -702,6 +732,29 @@ function player(key: string): void {
           ...view.squares.map(make),
         ),
       );
+      return;
+    }
+    if (view.mode === "free") {
+      const shelf = el("div", { id: "shelf" }, ...view.squares.map(make));
+      list.replaceChildren(
+        el("div", { className: "chips", id: "tabs" }),
+        el("section", { className: "panel", id: "quick" }),
+        el(
+          "section",
+          { className: "panel", id: "browse" },
+          el("h2", {}, "Browse"),
+          el(
+            "p",
+            { className: "note" },
+            "Answer whatever you like, whenever you like. You see how many people answered each one; who, and what they said, once you have answered it too.",
+          ),
+          el("div", { className: "chips", id: "sorts" }),
+          el("div", { className: "chips", id: "filters" }),
+          shelf,
+        ),
+      );
+      arrange(view);
+      tabs();
       return;
     }
     // In the open mode, one folding section per topic.
@@ -727,6 +780,176 @@ function player(key: string): void {
         return d;
       }),
     );
+  };
+
+  let sort: Sort = "popular";
+  let only = "all";
+  let tab: "quick" | "browse" = "quick";
+
+  const tabs = (): void => {
+    chips<"quick" | "browse">(
+      "tabs",
+      [
+        { value: "quick", label: "Quick fire", on: tab === "quick" },
+        { value: "browse", label: "Browse everything", on: tab === "browse" },
+      ],
+      (next) => {
+        tab = next;
+        tabs();
+        if (current) arrange(current);
+      },
+    );
+    hide("quick", tab !== "quick");
+    hide("browse", tab !== "browse");
+  };
+
+  // The quick-fire card. It stays on one statement until the player
+  // answers and moves on, or skips, however the feed's order changes.
+  let card: number | null = null;
+  let cardBuilt: number | null = null;
+  let cardSlider: HTMLInputElement | null = null;
+  let cardValue: HTMLElement | null = null;
+  let cardCrowd: HTMLElement | null = null;
+  let cardNext: HTMLButtonElement | null = null;
+  let cardCount: HTMLElement | null = null;
+
+  const pick = (view: PlayerView): void => {
+    card = view.next.find((id) => id !== card) ?? null;
+  };
+
+  const drawCard = (view: PlayerView): void => {
+    const box = document.getElementById("quick");
+    if (!box) return;
+    const answered = view.squares.filter((sq) => sq.answer !== null).length;
+    if (card === null) pick(view);
+    const sq = view.squares.find((q) => q.statement.id === card);
+    if (!sq) {
+      cardBuilt = null;
+      box.replaceChildren(
+        el("h2", {}, "That is all of them"),
+        el(
+          "p",
+          { className: "note" },
+          `You have answered ${answered} and skipped the rest. Browse everything to change an answer or go back to one you skipped.`,
+        ),
+      );
+      return;
+    }
+    if (cardBuilt !== sq.statement.id) {
+      cardBuilt = sq.statement.id;
+      const s = sq.statement;
+      cardValue = el("span", { className: "value" }, said(s, sq.answer));
+      cardSlider = slider(s, (v) => run(answer(s.id, v)), cardValue);
+      cardCrowd = el("p", { className: "crowd" });
+      const skip = el("button", { type: "button", className: "button" }, "Skip");
+      skip.addEventListener("click", () =>
+        run(
+          (async () => {
+            accept(await api("PUT", at("/skip"), { id: s.id }));
+            if (current) {
+              pick(current);
+              drawCard(current);
+            }
+          })(),
+        ),
+      );
+      cardNext = el("button", { type: "button", className: "button primary" }, "Next");
+      cardNext.addEventListener("click", () => {
+        if (!current) return;
+        pick(current);
+        drawCard(current);
+      });
+      cardCount = el("p", { className: "eyebrow" });
+      box.replaceChildren(
+        cardCount,
+        el("p", { className: "statement big-statement" }, s.text),
+        el(
+          "p",
+          { className: "note" },
+          `${new Map(view.topics).get(s.topic) ?? s.topic}${
+            s.chance ? (s.text.endsWith("?") ? " · a probability" : " · how likely is this to be true?") : ""
+          }`,
+        ),
+        cardSlider,
+        ends(s),
+        el("div", { className: "row-foot" }, cardValue),
+        cardCrowd,
+        el("div", { className: "actions" }, skip, cardNext),
+      );
+    }
+    if (cardSlider && cardSlider !== holding) {
+      cardSlider.value = String(sq.answer ?? (sq.statement.chance ? 50 : 0));
+      cardSlider.classList.toggle("unset", sq.answer === null);
+      if (cardValue) cardValue.textContent = said(sq.statement, sq.answer);
+    }
+    if (cardCrowd) cardCrowd.textContent = crowdText(sq);
+    if (cardCount) cardCount.textContent = `Quick fire · ${answered} answered`;
+    if (cardNext) cardNext.disabled = sq.answer === null;
+  };
+
+  /** Orders and filters the free mode's statements. Only when asked, not
+   *  on every update, so nothing jumps under a finger. */
+  const arrange = (view: PlayerView): void => {
+    const names = new Map(view.topics);
+    chips<Sort>(
+      "sorts",
+      [
+        { value: "popular", label: "Most answered", on: sort === "popular" },
+        { value: "unanswered", label: "Not answered by me", on: sort === "unanswered" },
+        { value: "topic", label: "By topic", on: sort === "topic" },
+      ],
+      (next) => {
+        sort = next;
+        if (current) arrange(current);
+      },
+    );
+    const topics = [...new Set(view.squares.map((sq) => sq.statement.topic))];
+    chips<string>(
+      "filters",
+      [
+        { value: "all", label: "All topics", on: only === "all" },
+        ...topics.map((t) => ({ value: t, label: names.get(t) ?? t, on: only === t })),
+      ],
+      (next) => {
+        only = next;
+        if (current) arrange(current);
+      },
+    );
+    const order = [...view.squares];
+    const byCount = (a: Square, b: Square): number =>
+      b.count + (b.answer !== null ? 1 : 0) - (a.count + (a.answer !== null ? 1 : 0));
+    if (sort === "popular") order.sort(byCount);
+    if (sort === "unanswered") {
+      order.sort((a, b) => Number(a.answer !== null) - Number(b.answer !== null) || byCount(a, b));
+    }
+    const shelf = document.getElementById("shelf");
+    if (!shelf) return;
+    for (const sq of order) {
+      const row = rows.get(sq.statement.id);
+      if (!row) continue;
+      row.box.hidden = only !== "all" && sq.statement.topic !== only;
+      shelf.append(row.box);
+    }
+  };
+
+  /** Who else answered, most opposed first. */
+  const crowdText = (sq: Square): string => {
+    if (sq.answer === null) {
+      return sq.count
+        ? `${plural(sq.count, "person has", "people have")} answered. Answer it to see who.`
+        : "Nobody has answered this yet.";
+    }
+    if (!sq.others.length) return "Nobody else has answered this yet.";
+    const mine = sq.answer;
+    const sorted = [...sq.others].sort(
+      (a, b) => Math.abs(b.answer - mine) - Math.abs(a.answer - mine),
+    );
+    const shown = sorted
+      .slice(0, 6)
+      .map((o) => `${o.name} ${said(sq.statement, o.answer).split(",")[0]}`);
+    const more = sorted.length > 6 ? ` and ${sorted.length - 6} more` : "";
+    const mean = sq.others.reduce((sum, o) => sum + o.answer, 0) / sq.others.length;
+    return `${plural(sq.others.length, "other", "others")}, furthest from you first: ${shown.join(", ")}${more}. Their average: ${said(sq.statement, Math.round(mean))}.`;
   };
 
   const drawGrid = (view: PlayerView): void => {
@@ -882,7 +1105,9 @@ function player(key: string): void {
         { className: "note" },
         view.mode === "bingo"
           ? "Answer the statements on your card. When a round starts you are paired with whoever disagrees with you most."
-          : "Answer the statements you have a view on. When a round starts you are paired with whoever disagrees with you most.",
+          : view.mode === "free"
+            ? "Browse and answer whatever you have a view on. The more people answer the same statements, the better the matches below get: go and talk to whoever disagrees with you most."
+            : "Answer the statements you have a view on. When a round starts you are paired with whoever disagrees with you most.",
       ),
     );
   };
@@ -928,6 +1153,7 @@ function player(key: string): void {
         row.value.textContent = said(sq.statement, sq.answer);
       }
       if (row.mark) row.mark.setAttribute("aria-pressed", String(sq.marked));
+      if (row.crowd) row.crowd.textContent = crowdText(sq);
       row.box.classList.toggle("answered", sq.answer !== null);
     }
     if (view.mode === "open") {
@@ -963,6 +1189,7 @@ function player(key: string): void {
     }
     drawOpposites(view);
     drawGrid(view);
+    if (view.mode === "free") drawCard(view);
   };
   let drawnNow = "";
 

@@ -208,3 +208,36 @@ details.topic small {
 .leaders li.first b {
   font-size: 1.15rem;
 }
+
+.crowd {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--body);
+}
+
+#sorts,
+#filters {
+  margin: 10px 0;
+}
+
+#sorts .chip,
+#filters .chip {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+/* The quick-fire card: one statement, large. */
+.big-statement {
+  font-size: 1.5rem;
+  margin: 10px 0 6px;
+}
+
+#quick .crowd {
+  min-height: 3em;
+}
+
+#tabs {
+  margin-top: 16px;
+}

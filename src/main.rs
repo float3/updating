@@ -138,6 +138,11 @@ struct Mark {
 }
 
 #[derive(Deserialize)]
+struct Skip {
+    id: u32,
+}
+
+#[derive(Deserialize)]
 struct Suggestion {
     text: String,
     #[serde(default)]
@@ -272,6 +277,11 @@ async fn mark(State(app): State<App>, Path(key): Path<String>, Json(m): Json<Mar
     .await
 }
 
+async fn skip(State(app): State<App>, Path(key): Path<String>, Json(s): Json<Skip>) -> Response {
+    let player = key.clone();
+    act_as(&app, &key, move |game, _| game.skip(&player, s.id)).await
+}
+
 /// Keeps a statement somebody would like added, one JSON line each, for
 /// whoever runs the server to read. Nothing reads it back over the web.
 async fn suggest(State(app): State<App>, Json(s): Json<Suggestion>) -> Response {
@@ -362,6 +372,7 @@ fn router(app: App) -> Router {
         .route("/api/p/{key}/events", get(player_events))
         .route("/api/p/{key}/answer", put(answer))
         .route("/api/p/{key}/mark", put(mark))
+        .route("/api/p/{key}/skip", put(skip))
         .with_state(app)
 }
 
@@ -552,6 +563,54 @@ mod tests {
         );
         let (status, _) = call(&t.app, "GET", &format!("/api/p/{host}"), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn in_the_free_mode_who_answered_is_shown_only_after_answering() {
+        let t = test("free");
+        let (host, ada, bo) = ready(&t.app).await;
+        ok(
+            &t.app,
+            "PUT",
+            &format!("/api/h/{host}/setup"),
+            Some(json!({"mode": "free", "topics": ["mind"], "side": 4})),
+        )
+        .await;
+        ok(
+            &t.app,
+            "PUT",
+            &format!("/api/p/{bo}/answer"),
+            Some(json!({"id": 2, "value": -40})),
+        )
+        .await;
+
+        let before = ok(&t.app, "GET", &format!("/api/p/{ada}"), None).await["view"].clone();
+        assert_eq!(
+            before["squares"][2]["count"], 1,
+            "Ada sees that somebody answered"
+        );
+        assert!(
+            before["squares"][2]["others"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!before.to_string().contains("-40"), "but not what or who");
+
+        let after = ok(
+            &t.app,
+            "PUT",
+            &format!("/api/p/{ada}/answer"),
+            Some(json!({"id": 2, "value": 60})),
+        )
+        .await["view"]
+            .clone();
+        assert_eq!(after["squares"][2]["others"][0]["name"], "Bo");
+        assert_eq!(after["squares"][2]["others"][0]["answer"], -40);
+        assert_eq!(
+            after["opposites"][0]["name"], "Bo",
+            "and Bo is the one to go and find"
+        );
     }
 
     #[tokio::test]
