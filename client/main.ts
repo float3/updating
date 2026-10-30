@@ -10,16 +10,15 @@ import {
   countdown,
   el,
   fail,
+  failed,
   hide,
-  joinLink,
+  joining,
   onClick,
   onSubmit,
   plural,
-  qrInto,
-  remember,
-  remembered,
   route,
   show,
+  showJoin,
   text,
   watch,
 } from "./rooms";
@@ -276,7 +275,6 @@ function host(key: string): void {
   let current: HostView | null = null;
   /** The setup as the facilitator is editing it, before it is sent. */
   let draft: { mode: Mode; scale: Scale; topics: string[]; side: number } | null = null;
-  let qrFor = "";
 
   const send = async (method: string, path: string, body?: unknown): Promise<void> => {
     const result = await api<{ now: number; view: HostView }>(method, at(path), body);
@@ -542,14 +540,7 @@ function host(key: string): void {
 
   const draw = (view: HostView): void => {
     current = view;
-    const link = joinLink(view.join);
-    const a = byId<HTMLAnchorElement>("join-link");
-    a.href = link;
-    a.textContent = link;
-    if (qrFor !== link) {
-      qrFor = link;
-      qrInto("join-qr", link);
-    }
+    showJoin(view.join);
     byId("room").classList.toggle("tight", view.phase !== "answering");
     text(
       "who",
@@ -592,26 +583,6 @@ function host(key: string): void {
   );
 }
 
-// ----------------------------------------------------------------- join
-
-function join(key: string): void {
-  const known = remembered("updating", key);
-  if (known) {
-    location.replace(`/p/${known}`);
-    return;
-  }
-  show("join");
-  api<{ players: number }>("GET", `/api/j/${key}`)
-    .then((r) => text("join-count", r.players ? `${plural(r.players, "person is", "people are")} in already.` : ""))
-    .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-  onSubmit("name-form", async () => {
-    const r = await api<{ player: string }>("POST", `/api/j/${key}`, {
-      name: byId<HTMLInputElement>("name").value,
-    });
-    remember("updating", key, r.player);
-    location.href = `/p/${r.player}`;
-  });
-}
 
 // --------------------------------------------------------------- player
 
@@ -651,7 +622,7 @@ function player(key: string): void {
   };
 
   const run = (p: Promise<void>): void => {
-    p.catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
+    p.catch(failed);
   };
 
   /** A slider for one statement, sending when let go. */
@@ -1212,6 +1183,6 @@ function player(key: string): void {
 
 const where = route();
 if (where.kind === "host") host(where.key);
-else if (where.kind === "join") join(where.key);
+else if (where.kind === "join") joining("updating", where.key);
 else if (where.kind === "player") player(where.key);
 else start();

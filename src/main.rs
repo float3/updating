@@ -16,30 +16,31 @@ use std::{
     io::Write,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use axum::{
     Json, Router,
-    body::Bytes,
     extract::{Path, State},
-    http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post, put},
 };
-use rooms::{Room, Rooms, http, now_ms, qr};
+use rooms::{Room, Rooms, http, now_ms, site};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use game::{Game, Mode, Scale};
 
-const INDEX: &str = include_str!("../static/index.html");
-const ICON: &str = include_str!("../static/icon.svg");
-const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
-const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
+/// The page and its files. The script and stylesheet are compiled from
+/// the TypeScript and CSS in `client/` by the build script.
+const FILES: site::Files = site::Files {
+    page: include_str!("../static/index.html"),
+    icon: include_str!("../static/icon.svg"),
+    script: include_str!(concat!(env!("OUT_DIR"), "/app.js")),
+    stylesheet: include_str!(concat!(env!("OUT_DIR"), "/app.css")),
+};
 
 const MAX_ROOMS: usize = 2000;
-const SWEEP: Duration = Duration::from_secs(5 * 60);
 /// Suggested statements are kept until somebody reads them; past this the
 /// file takes no more, so nobody can fill the disk with it.
 const MAX_SUGGESTIONS_BYTES: u64 = 1 << 20;
@@ -50,28 +51,22 @@ struct App {
     suggestions: Arc<Mutex<PathBuf>>,
 }
 
-fn refused(message: &str) -> Response {
-    http::error(StatusCode::CONFLICT, message)
-}
-
 /// Applies a facilitator's action and answers with their whole view.
 async fn act(
     app: &App,
     key: &str,
     action: impl FnOnce(&mut Game, u64) -> Result<(), &'static str>,
 ) -> Response {
-    let done = app
-        .rooms
-        .with(key, |game, now| {
+    site::act(
+        &app.rooms,
+        key,
+        |game, now| {
             game.tick(now);
-            action(game, now).map(|()| http::envelope(now, &view::host(game)))
-        })
-        .await;
-    match done {
-        None => http::gone(),
-        Some(Err(message)) => refused(message),
-        Some(Ok(body)) => http::json(body),
-    }
+            action(game, now)
+        },
+        |game, now| http::envelope(now, &view::host(game)),
+    )
+    .await
 }
 
 /// The same for a player: finds their room by their key, then acts.
@@ -99,7 +94,7 @@ async fn act_as(
         .await;
     match done {
         None => http::gone(),
-        Some(Err(message)) => refused(message),
+        Some(Err(message)) => http::refused(message),
         Some(Ok(body)) => http::json(body),
     }
 }
@@ -151,14 +146,7 @@ struct Suggestion {
 
 async fn open_room(State(app): State<App>) -> Response {
     let now = now_ms();
-    let Some(host) = app.rooms.create(|_| Game::new(now)).await else {
-        return http::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Too many rooms are open at once. Try again in a few minutes.",
-        );
-    };
-    let join = app.rooms.read(&host, |game, _| game.join.clone()).await;
-    Json(serde_json::json!({ "host": host, "join": join })).into_response()
+    site::open(&app.rooms, |_| Game::new(now), |game| game.join.clone()).await
 }
 
 async fn host_state(State(app): State<App>, Path(key): Path<String>) -> Response {
@@ -206,19 +194,12 @@ async fn reopen(State(app): State<App>, Path(key): Path<String>) -> Response {
     act(&app, &key, |game, _| game.reopen()).await
 }
 
-async fn room_with_join(app: &App, join: &str) -> Option<String> {
-    let join = join.to_string();
-    app.rooms
-        .find(move |key, game| (game.join == join).then(|| key.to_string()))
-        .await
-}
-
 async fn join(
     State(app): State<App>,
     Path(join): Path<String>,
     Json(named): Json<Named>,
 ) -> Response {
-    let Some(key) = room_with_join(&app, &join).await else {
+    let Some(key) = app.rooms.key_where(|game| game.join == join).await else {
         return http::gone();
     };
     match app
@@ -227,13 +208,13 @@ async fn join(
         .await
     {
         None => http::gone(),
-        Some(Err(message)) => refused(message),
+        Some(Err(message)) => http::refused(message),
         Some(Ok(player)) => Json(serde_json::json!({ "player": player })).into_response(),
     }
 }
 
 async fn whose(State(app): State<App>, Path(join): Path<String>) -> Response {
-    let Some(key) = room_with_join(&app, &join).await else {
+    let Some(key) = app.rooms.key_where(|game| game.join == join).await else {
         return http::gone();
     };
     match app.rooms.read(&key, |game, _| game.players.len()).await {
@@ -287,7 +268,7 @@ async fn skip(State(app): State<App>, Path(key): Path<String>, Json(s): Json<Ski
 async fn suggest(State(app): State<App>, Json(s): Json<Suggestion>) -> Response {
     let text = game::tidy(&s.text, game::MAX_STATEMENT);
     if text.chars().count() < 8 {
-        return refused("Write the statement out, so it can be added as it is.");
+        return http::refused("Write the statement out, so it can be added as it is.");
     }
     let file = app.suggestions.lock().await;
     match keep(&file, &text, s.chance, now_ms()) {
@@ -310,52 +291,9 @@ fn keep(path: &FsPath, text: &str, chance: bool, now: u64) -> Result<(), &'stati
         .map_err(|_| "The suggestion could not be saved. Try again later.")
 }
 
-async fn qr_code(body: Bytes) -> Response {
-    match std::str::from_utf8(&body) {
-        Ok(link) => qr::response(link),
-        Err(_) => http::error(StatusCode::BAD_REQUEST, "That is not a link."),
-    }
-}
-
-async fn time() -> Response {
-    http::json(format!("{{\"now\":{}}}", now_ms()))
-}
-
-async fn page() -> Html<&'static str> {
-    Html(INDEX)
-}
-
-fn asset(kind: &'static str, cache: &'static str, body: &'static str) -> Response {
-    (
-        [(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)],
-        body,
-    )
-        .into_response()
-}
-
-async fn script() -> Response {
-    asset("text/javascript; charset=utf-8", "no-cache", APP_JS)
-}
-
-async fn stylesheet() -> Response {
-    asset("text/css; charset=utf-8", "no-cache", APP_CSS)
-}
-
-async fn icon() -> Response {
-    asset("image/svg+xml", "max-age=3600", ICON)
-}
-
 fn router(app: App) -> Router {
     Router::new()
-        .route("/", get(page))
-        .route("/h/{key}", get(page))
-        .route("/j/{key}", get(page))
-        .route("/p/{key}", get(page))
-        .route("/icon.svg", get(icon))
-        .route("/app.js", get(script))
-        .route("/app.css", get(stylesheet))
-        .route("/api/time", get(time))
-        .route("/api/qr", post(qr_code))
+        .merge(site::routes(FILES))
         .route("/api/suggest", post(suggest))
         .route("/api/rooms", post(open_room))
         .route("/api/h/{key}", get(host_state))
@@ -384,23 +322,22 @@ async fn main() {
         std::env::var("UPDATING_SUGGESTIONS").unwrap_or_else(|_| "suggestions.jsonl".into());
 
     let rooms = Rooms::load(PathBuf::from(state), MAX_ROOMS);
-    tokio::spawn(rooms.clone().sweep(SWEEP));
+    tokio::spawn(rooms.clone().sweep(rooms::SWEEP));
     let app = App {
         rooms,
         suggestions: Arc::new(Mutex::new(PathBuf::from(suggestions))),
     };
 
-    let listener = rooms::listen(&addr).await;
-    println!("{}", rooms::where_it_listens(&listener));
-    axum::serve(listener, router(app))
-        .await
-        .expect("the server stopped");
+    rooms::serve(&addr, router(app)).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, http::Request};
+    use axum::{
+        body::Body,
+        http::{Request, header},
+    };
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
     use tower::ServiceExt;
