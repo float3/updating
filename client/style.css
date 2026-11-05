@@ -635,3 +635,10 @@ body.wall-screen main {
 .explainer li + li {
   margin-top: 4px;
 }
+
+/* The round's conversations, for somebody not paired: several fit on a
+ * phone, so the spot is smaller than one's own. */
+.listen .spot {
+  font-size: 1.6rem;
+  margin: 0;
+}

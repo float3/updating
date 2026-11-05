@@ -255,6 +255,14 @@ interface Mine {
   done: boolean;
 }
 
+interface Listen {
+  spot: string;
+  statement: Statement;
+  answer: number | null;
+  /** Whether it can be answered here: in bingo, only from your card. */
+  open: boolean;
+}
+
 interface Opposite {
   name: string;
   statement: Statement;
@@ -267,6 +275,8 @@ interface PlayerView {
   name: string;
   /** Sitting rounds out: not paired until back, or until they answer. */
   away: boolean;
+  /** Not paired while a round is talked: the conversations to join. */
+  listening: Listen[];
   mode: Mode;
   side: number;
   phase: Phase;
@@ -1679,6 +1689,37 @@ function player(key: string): void {
     );
   };
 
+  /** One of the round's conversations, to answer and go and listen in. */
+  const listenCard = (l: Listen): HTMLElement => {
+    const s = l.statement;
+    const parts: (HTMLElement | string)[] = [
+      el("p", { className: "spot" }, l.spot),
+      el("p", { className: "statement" }, s.text),
+    ];
+    if (l.open) {
+      const value = el("span", { className: "value" }, said(s, l.answer));
+      const input = slider(s, (v) => run(answer(s.id, v)), value);
+      if (l.answer !== null) {
+        input.value = String(l.answer);
+        input.classList.remove("unset");
+      }
+      parts.push(
+        input,
+        ends(s),
+        el("div", { className: "row-foot" }, value),
+        pulse(
+          `s${s.id}`,
+          l.answer === null
+            ? sentBox("waiting", "Not answered yet", "Say where you stand before you listen. It is sent when you let go.")
+            : sentBox("sent", `✓ Sent: ${said(s, l.answer)}`, "Go and listen in at the spot."),
+        ),
+      );
+    } else {
+      parts.push(el("p", { className: "note" }, "Not on your card, but you can still go and listen in."));
+    }
+    return el("div", { className: "step listen" }, ...parts);
+  };
+
   const drawNow = (view: PlayerView): void => {
     const box = byId("now");
     const g = view.group;
@@ -1724,8 +1765,11 @@ function player(key: string): void {
           { className: "note" },
           view.away
             ? "Press I'm back above when you want to be paired again."
-            : "Nobody was left, or nobody had answered the same statements as you. Answer some more, or go and find somebody below.",
+            : view.listening.length
+              ? "Nobody was left, or nobody had answered the same statements as you. Pick one of this round's conversations, say where you stand, and go and listen in."
+              : "Nobody was left, or nobody had answered the same statements as you. Answer some more, or go and find somebody below.",
         ),
+        ...(view.away ? [] : view.listening.map(listenCard)),
       );
       return;
     }
@@ -1894,6 +1938,7 @@ function player(key: string): void {
       view.group,
       view.waiting,
       view.away,
+      view.listening,
       view.updated,
       view.moved,
       view.mode,

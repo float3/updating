@@ -1053,6 +1053,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn somebody_not_paired_is_shown_the_rounds_conversations_to_join() {
+        let t = test("listen");
+        let (host, ada, bo) = ready(&t.app).await;
+        let code = join_key(&t.app, &host).await;
+        let (_, body) = join(&t.app, &code, json!({"name": "Cy"})).await;
+        let cy = body["player"].as_str().unwrap().to_string();
+        answer(&t.app, &ada, 0, 90).await;
+        answer(&t.app, &bo, 0, 10).await;
+        // Nothing in common with anybody, so not paired.
+        answer(&t.app, &cy, 5, 50).await;
+
+        let before = ok(&t.app, "GET", &format!("/api/p/{cy}"), None).await["view"].clone();
+        assert!(before["listening"].as_array().unwrap().is_empty());
+        ok(&t.app, "POST", &format!("/api/h/{host}/round"), None).await;
+        let view = ok(&t.app, "GET", &format!("/api/p/{cy}"), None).await["view"].clone();
+        assert_eq!(view["waiting"], true);
+        let listen = &view["listening"];
+        assert_eq!(listen.as_array().unwrap().len(), 1);
+        assert_eq!(listen[0]["spot"], "🦊 Fox");
+        assert_eq!(listen[0]["statement"]["id"], 0);
+        assert!(listen[0]["answer"].is_null());
+        assert_eq!(listen[0]["open"], true);
+        let text = listen.to_string();
+        assert!(
+            !text.contains("Ada") && !text.contains("90"),
+            "nothing about who is in it or what they said: {text}"
+        );
+
+        let view = answer(&t.app, &cy, 0, 40).await["view"].clone();
+        assert_eq!(view["listening"][0]["answer"], 40);
+        let paired = ok(&t.app, "GET", &format!("/api/p/{ada}"), None).await["view"].clone();
+        assert!(paired["listening"].as_array().unwrap().is_empty());
+
+        ok(&t.app, "POST", &format!("/api/h/{host}/stop"), None).await;
+        let view = ok(&t.app, "GET", &format!("/api/p/{cy}"), None).await["view"].clone();
+        assert!(
+            view["listening"].as_array().unwrap().is_empty(),
+            "only while they are talking"
+        );
+    }
+
+    #[tokio::test]
     async fn somebody_away_is_not_paired_until_they_are_back() {
         let t = test("away");
         let (host, ada, bo) = ready(&t.app).await;
