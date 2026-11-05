@@ -80,7 +80,10 @@ already talked come last. pairs are taken greedily, biggest disagreement
 first, then repaired: wherever swapping partners seats two more people, the
 swap is made. with an odd number, the one left over joins the pair whose
 statement they are furthest from, as a three. people who have answered
-nothing anybody else has answered are told they were not paired, and why.
+nothing anybody else has answered are told they were not paired, and why. while
+the round is on, their phone lists its conversations, by meeting spot and
+statement as on the wall, so they can say where they stand on one and go
+and listen in.
 
 both scales are compared on one from 0 to 200: from 0% to 100% is as far
 apart as from 1 to 7. one step of agreement is 33 points, one percentage
