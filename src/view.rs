@@ -602,6 +602,20 @@ pub struct Mine<'a> {
     after: Option<i16>,
 }
 
+/// A conversation of the round that is on, for somebody who was not
+/// paired: where it meets and what about, as the wall shows it, so they
+/// can answer it and go and listen in.
+#[derive(Serialize)]
+pub struct Listen<'a> {
+    spot: String,
+    statement: &'a Statement,
+    /// Their own answer to it, if they have one.
+    answer: Option<i16>,
+    /// Whether they can answer it: in the bingo mode, only what is on
+    /// their card.
+    open: bool,
+}
+
 #[derive(Serialize)]
 pub struct Opposite<'a> {
     name: String,
@@ -623,6 +637,9 @@ pub struct PlayerView<'a> {
     topics: Vec<(&'static str, &'static str)>,
     group: Option<Mine<'a>>,
     waiting: bool,
+    /// While a round is being talked and they were not paired, the
+    /// conversations they could join.
+    listening: Vec<Listen<'a>>,
     opposites: Vec<Opposite<'a>>,
     lines: usize,
     updated: usize,
@@ -765,6 +782,25 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<PlayerView<'a>> {
         })
     });
     let waiting = matches!(game.phase, Phase::Talking | Phase::Updating) && group.is_none();
+    let listening = match game.rounds.last() {
+        Some(round) if waiting && game.phase == Phase::Talking => {
+            let hand = game.hand(me);
+            round
+                .groups
+                .iter()
+                .enumerate()
+                .filter_map(|(i, g)| {
+                    Some(Listen {
+                        spot: spot(i),
+                        statement: game.statement(g.statement)?,
+                        answer: me.answers.get(&g.statement).copied(),
+                        open: hand.contains(&g.statement),
+                    })
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
     let opposites = if matches!(game.phase, Phase::Talking | Phase::Warmup) {
         Vec::new()
     } else {
@@ -818,6 +854,7 @@ pub fn player<'a>(game: &'a Game, key: &str) -> Option<PlayerView<'a>> {
             .collect(),
         group,
         waiting,
+        listening,
         opposites,
         lines: game.lines(me),
         updated,

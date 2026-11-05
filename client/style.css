@@ -599,3 +599,10 @@ body.wall-screen main {
 .wall-game .wall-board li {
   font-size: clamp(1.2rem, 2vw, 1.8rem);
 }
+
+/* The round's conversations, for somebody not paired: several fit on a
+ * phone, so the spot is smaller than one's own. */
+.listen .spot {
+  font-size: 1.6rem;
+  margin: 0;
+}
