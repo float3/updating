@@ -153,7 +153,7 @@ fn awards(game: &Game) -> Vec<Award> {
         "Best conversation",
         "Closed the widest gap in one round",
         (top, names),
-        format!("{} points closed", top),
+        format!("closed a gap of {top}"),
     );
     let (top, names) = best(&|s| s.opened);
     add(
